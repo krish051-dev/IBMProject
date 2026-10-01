@@ -1,0 +1,685 @@
+import numpy as np
+import pandas as pd
+
+
+np.random.seed(42)
+
+
+n = 1000
+
+
+timestamps = pd.date_range(
+    start="2026-01-01 00:00:00",
+    periods=n,
+    freq="min"
+)
+
+
+cpu = np.random.normal(45, 10, n)
+memory = np.random.normal(55, 8, n)
+disk = np.random.normal(40, 10, n)
+network = np.random.normal(30, 8, n)
+processes = np.random.normal(100, 15, n)
+
+
+cpu = np.clip(cpu, 5, 90)
+memory = np.clip(memory, 10, 90)
+disk = np.clip(disk, 5, 90)
+network = np.clip(network, 5, 90)
+processes = np.clip(processes, 30, 180)
+
+
+anomaly = np.zeros(n)
+
+
+cpu_anomaly_indices = [150, 300, 450, 600, 750]
+cpu[cpu_anomaly_indices] = [97, 95, 99, 96, 98]
+anomaly[cpu_anomaly_indices] = 1
+
+
+memory_anomaly_indices = [200, 400, 500, 700, 850]
+memory[memory_anomaly_indices] = [92, 94, 96, 95, 98]
+anomaly[memory_anomaly_indices] = 1
+
+
+combined_indices = [250, 550, 900]
+cpu[combined_indices] = [96, 99, 97]
+memory[combined_indices] = [94, 97, 96]
+anomaly[combined_indices] = 1
+
+
+df = pd.DataFrame({
+    "timestamp": timestamps,
+    "cpu_usage": cpu,
+    "memory_usage": memory,
+    "disk_usage": disk,
+    "network_usage": network,
+    "active_processes": processes,
+    "anomaly": anomaly.astype(int)
+})
+
+
+df.to_csv("server_load_dataset.csv", index=False)
+
+
+print("Dataset created successfully!")
+print("Dataset shape:", df.shape)
+print("\nFirst 10 records:")
+display(df.head(10))
+
+print("\nNumber of anomalies:", df["anomaly"].sum())
+print("Number of normal records:", (df["anomaly"] == 0).sum())
+---
+# Basic information
+print("Dataset Information:")
+print(df.info())
+
+# Statistical summary
+print("\nStatistical Summary:")
+display(df.describe())
+
+# Check missing values
+print("\nMissing Values:")
+print(df.isnull().sum())
+
+# Count normal and anomalous records
+print("\nClass Distribution:")
+print(df["anomaly"].value_counts())
+---
+from sklearn.preprocessing import StandardScaler
+
+# Select features for anomaly detection
+features = [
+    "cpu_usage",
+    "memory_usage",
+    "disk_usage",
+    "network_usage",
+    "active_processes"
+]
+
+X = df[features]
+
+# Store actual labels separately for evaluation
+y_true = df["anomaly"]
+
+# Standardize the features
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+print("Features selected:")
+print(features)
+
+print("\nOriginal data shape:", X.shape)
+print("Scaled data shape:", X_scaled.shape)
+
+print("\nFirst 5 scaled records:")
+print(X_scaled[:5])
+---
+from sklearn.svm import OneClassSVM
+
+# Create One-Class SVM model
+model = OneClassSVM(
+    kernel="rbf",
+    gamma="auto",
+    nu=0.02
+)
+
+# Train the model
+model.fit(X_scaled)
+
+# Predict anomalies
+predictions = model.predict(X_scaled)
+
+# Convert predictions:
+# 1  = normal
+# -1 = anomaly
+predicted_anomaly = (predictions == -1).astype(int)
+
+print("One-Class SVM completed successfully!")
+
+print("\nPredicted normal records:",
+      (predicted_anomaly == 0).sum())
+
+print("Predicted anomaly records:",
+      (predicted_anomaly == 1).sum())
+---
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix
+
+# Create confusion matrix
+cm = confusion_matrix(y_true, predicted_anomaly)
+
+# Display values
+print("Confusion Matrix:")
+print(cm)
+
+# Matplotlib-only visualization
+plt.figure(figsize=(6, 5))
+
+plt.imshow(cm, interpolation="nearest")
+plt.title("One-Class SVM Confusion Matrix")
+plt.colorbar()
+
+# Axis labels
+plt.xticks([0, 1], ["Normal", "Anomaly"])
+plt.yticks([0, 1], ["Normal", "Anomaly"])
+
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+
+# Add numbers inside the matrix
+for i in range(2):
+    for j in range(2):
+        plt.text(
+            j,
+            i,
+            cm[i, j],
+            ha="center",
+            va="center"
+        )
+
+plt.tight_layout()
+plt.show()
+---
+import matplotlib.pyplot as plt
+
+# Create a copy of the dataset
+results = df.copy()
+
+# Add model predictions
+results["predicted_anomaly"] = predicted_anomaly
+
+# Plot CPU usage
+plt.figure(figsize=(14, 6))
+
+# Plot all CPU usage
+plt.plot(
+    results["timestamp"],
+    results["cpu_usage"],
+    label="CPU Usage"
+)
+
+# Highlight predicted anomalies
+anomaly_data = results[results["predicted_anomaly"] == 1]
+
+plt.scatter(
+    anomaly_data["timestamp"],
+    anomaly_data["cpu_usage"],
+    label="Detected Anomaly",
+    marker="x",
+    s=60
+)
+
+plt.title("CPU Usage and Detected Anomalies")
+plt.xlabel("Time")
+plt.ylabel("CPU Usage (%)")
+plt.legend()
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+---
+plt.figure(figsize=(14, 6))
+
+# Plot memory usage
+plt.plot(
+    results["timestamp"],
+    results["memory_usage"],
+    label="Memory Usage"
+)
+
+# Highlight predicted anomalies
+plt.scatter(
+    anomaly_data["timestamp"],
+    anomaly_data["memory_usage"],
+    label="Detected Anomaly",
+    marker="x",
+    s=60
+)
+
+plt.title("Memory Usage and Detected Anomalies")
+plt.xlabel("Time")
+plt.ylabel("Memory Usage (%)")
+plt.legend()
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+---
+# Calculate anomaly scores
+results["anomaly_score"] = model.decision_function(X_scaled)
+
+# Lower scores indicate more unusual observations
+print("Anomaly Score Statistics:")
+print(results["anomaly_score"].describe())
+
+# Display the 10 most anomalous records
+most_anomalous = results.sort_values(
+    "anomaly_score"
+).head(10)
+
+print("\nTop 10 Most Anomalous Records:")
+display(
+    most_anomalous[
+        [
+            "timestamp",
+            "cpu_usage",
+            "memory_usage",
+            "disk_usage",
+            "network_usage",
+            "active_processes",
+            "anomaly_score",
+            "anomaly",
+            "predicted_anomaly"
+        ]
+    ]
+)
+---
+import matplotlib.pyplot as plt
+
+# Separate normal and anomalous predictions
+normal_data = results[results["predicted_anomaly"] == 0]
+anomaly_data = results[results["predicted_anomaly"] == 1]
+
+plt.figure(figsize=(10, 7))
+
+# Normal observations
+plt.scatter(
+    normal_data["cpu_usage"],
+    normal_data["memory_usage"],
+    label="Normal",
+    alpha=0.6,
+    s=30
+)
+
+# Detected anomalies
+plt.scatter(
+    anomaly_data["cpu_usage"],
+    anomaly_data["memory_usage"],
+    label="Detected Anomaly",
+    marker="x",
+    s=70
+)
+
+plt.title("CPU Usage vs Memory Usage")
+plt.xlabel("CPU Usage (%)")
+plt.ylabel("Memory Usage (%)")
+plt.legend()
+plt.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+---
+# Create a clean table of detected anomalies
+detected_anomalies = results[
+    results["predicted_anomaly"] == 1
+].sort_values("anomaly_score")
+
+print("Total detected anomalies:", len(detected_anomalies))
+
+display(
+    detected_anomalies[
+        [
+            "timestamp",
+            "cpu_usage",
+            "memory_usage",
+            "disk_usage",
+            "network_usage",
+            "active_processes",
+            "anomaly_score"
+        ]
+    ].head(15)
+)
+---
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score
+)
+
+accuracy = accuracy_score(y_true, predicted_anomaly)
+precision = precision_score(y_true, predicted_anomaly)
+recall = recall_score(y_true, predicted_anomaly)
+f1 = f1_score(y_true, predicted_anomaly)
+
+print("=" * 40)
+print("FINAL MODEL EVALUATION")
+print("=" * 40)
+
+print(f"Total Records       : {len(results)}")
+print(f"Actual Anomalies    : {y_true.sum()}")
+print(f"Detected Anomalies  : {predicted_anomaly.sum()}")
+
+print("\nPerformance Metrics")
+print("-" * 40)
+print(f"Accuracy             : {accuracy:.2%}")
+print(f"Precision            : {precision:.2%}")
+print(f"Recall               : {recall:.2%}")
+print(f"F1-Score             : {f1:.2%}")
+---
+from sklearn.svm import OneClassSVM
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+nu_values = [0.01, 0.02, 0.03, 0.05]
+
+results_comparison = []
+
+for nu in nu_values:
+
+    # Create model
+    svm_model = OneClassSVM(
+        kernel="rbf",
+        gamma="auto",
+        nu=nu
+    )
+
+    # Train
+    svm_model.fit(X_scaled)
+
+    # Predict
+    pred = svm_model.predict(X_scaled)
+
+    # Convert -1/1 to 1/0
+    pred_anomaly = (pred == -1).astype(int)
+
+    # Calculate metrics
+    results_comparison.append({
+        "nu": nu,
+        "Detected Anomalies": pred_anomaly.sum(),
+        "Accuracy": accuracy_score(y_true, pred_anomaly),
+        "Precision": precision_score(y_true, pred_anomaly),
+        "Recall": recall_score(y_true, pred_anomaly),
+        "F1 Score": f1_score(y_true, pred_anomaly)
+    })
+
+comparison_df = pd.DataFrame(results_comparison)
+
+display(comparison_df)
+---
+from sklearn.svm import OneClassSVM
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix
+)
+
+# Use only normal records for training
+normal_training_data = X_scaled[y_true == 0]
+
+print("Training records:", len(normal_training_data))
+print("Training anomalies:", 0)
+
+# Final One-Class SVM
+final_model = OneClassSVM(
+    kernel="rbf",
+    gamma="auto",
+    nu=0.05
+)
+
+# Train only on normal data
+final_model.fit(normal_training_data)
+
+# Predict on the complete dataset
+final_predictions = final_model.predict(X_scaled)
+
+# Convert:
+# 1  = normal
+# -1 = anomaly
+final_predicted_anomaly = (final_predictions == -1).astype(int)
+
+# Evaluate
+accuracy = accuracy_score(y_true, final_predicted_anomaly)
+precision = precision_score(y_true, final_predicted_anomaly)
+recall = recall_score(y_true, final_predicted_anomaly)
+f1 = f1_score(y_true, final_predicted_anomaly)
+
+print("\nFINAL MODEL RESULTS")
+print("=" * 40)
+print("Detected anomalies:", final_predicted_anomaly.sum())
+print(f"Accuracy : {accuracy:.2%}")
+print(f"Precision: {precision:.2%}")
+print(f"Recall   : {recall:.2%}")
+print(f"F1 Score : {f1:.2%}")
+
+print("\nConfusion Matrix:")
+print(confusion_matrix(y_true, final_predicted_anomaly))
+---
+from sklearn.svm import OneClassSVM
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+# Normal data only for training
+normal_training_data = X_scaled[y_true == 0]
+
+nu_values = [0.01, 0.02, 0.03, 0.05]
+
+comparison = []
+
+for nu in nu_values:
+
+    # Create model
+    svm_model = OneClassSVM(
+        kernel="rbf",
+        gamma="auto",
+        nu=nu
+    )
+
+    # Train only on normal observations
+    svm_model.fit(normal_training_data)
+
+    # Predict on complete dataset
+    predictions = svm_model.predict(X_scaled)
+
+    # Convert -1 = anomaly, 1 = normal
+    predicted = (predictions == -1).astype(int)
+
+    # Metrics
+    comparison.append({
+        "nu": nu,
+        "Detected Anomalies": predicted.sum(),
+        "Accuracy": accuracy_score(y_true, predicted),
+        "Precision": precision_score(y_true, predicted, zero_division=0),
+        "Recall": recall_score(y_true, predicted, zero_division=0),
+        "F1 Score": f1_score(y_true, predicted, zero_division=0)
+    })
+
+comparison_df = pd.DataFrame(comparison)
+
+display(comparison_df)
+---
+from sklearn.svm import OneClassSVM
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix
+)
+
+# Use only normal data for training
+normal_training_data = X_scaled[y_true == 0]
+
+# Final One-Class SVM
+final_model = OneClassSVM(
+    kernel="rbf",
+    gamma="auto",
+    nu=0.01
+)
+
+# Train the final model
+final_model.fit(normal_training_data)
+
+# Predict on complete dataset
+final_predictions = final_model.predict(X_scaled)
+
+# Convert predictions
+# 1 = Normal
+# -1 = Anomaly
+final_predicted_anomaly = (final_predictions == -1).astype(int)
+
+# Calculate metrics
+accuracy = accuracy_score(y_true, final_predicted_anomaly)
+precision = precision_score(
+    y_true,
+    final_predicted_anomaly,
+    zero_division=0
+)
+recall = recall_score(
+    y_true,
+    final_predicted_anomaly,
+    zero_division=0
+)
+f1 = f1_score(
+    y_true,
+    final_predicted_anomaly,
+    zero_division=0
+)
+
+# Confusion matrix
+cm = confusion_matrix(
+    y_true,
+    final_predicted_anomaly
+)
+
+print("=" * 45)
+print("FINAL SERVER LOAD ANOMALY DETECTION MODEL")
+print("=" * 45)
+
+print(f"Training records       : {len(normal_training_data)}")
+print(f"Actual anomalies       : {y_true.sum()}")
+print(f"Detected anomalies     : {final_predicted_anomaly.sum()}")
+
+print("\nPerformance Metrics")
+print("-" * 45)
+print(f"Accuracy               : {accuracy:.2%}")
+print(f"Precision              : {precision:.2%}")
+print(f"Recall                 : {recall:.2%}")
+print(f"F1-Score               : {f1:.2%}")
+
+print("\nConfusion Matrix")
+print(cm)
+---
+# Store final predictions in the results DataFrame
+results["final_prediction"] = final_predicted_anomaly
+
+# Calculate final anomaly scores
+results["final_anomaly_score"] = final_model.decision_function(X_scaled)
+
+# Separate normal and detected anomaly records
+final_normal = results[results["final_prediction"] == 0]
+final_anomalies = results[results["final_prediction"] == 1]
+
+print("FINAL RESULTS")
+print("=" * 40)
+print("Total records:", len(results))
+print("Actual anomalies:", results["anomaly"].sum())
+print("Detected anomalies:", results["final_prediction"].sum())
+
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(14, 6))
+
+plt.plot(
+    results["timestamp"],
+    results["cpu_usage"],
+    label="CPU Usage"
+)
+
+plt.scatter(
+    final_anomalies["timestamp"],
+    final_anomalies["cpu_usage"],
+    marker="x",
+    s=70,
+    label="Detected Anomaly"
+)
+
+plt.title("CPU Usage and Detected Anomalies")
+plt.xlabel("Time")
+plt.ylabel("CPU Usage (%)")
+plt.legend()
+plt.xticks(rotation=45)
+plt.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+plt.figure(figsize=(14, 6))
+
+plt.plot(
+    results["timestamp"],
+    results["memory_usage"],
+    label="Memory Usage"
+)
+
+plt.scatter(
+    final_anomalies["timestamp"],
+    final_anomalies["memory_usage"],
+    marker="x",
+    s=70,
+    label="Detected Anomaly"
+)
+
+plt.title("Memory Usage and Detected Anomalies")
+plt.xlabel("Time")
+plt.ylabel("Memory Usage (%)")
+plt.legend()
+plt.xticks(rotation=45)
+plt.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+plt.figure(figsize=(10, 7))
+
+plt.scatter(
+    final_normal["cpu_usage"],
+    final_normal["memory_usage"],
+    label="Normal",
+    alpha=0.6,
+    s=30
+)
+
+plt.scatter(
+    final_anomalies["cpu_usage"],
+    final_anomalies["memory_usage"],
+    label="Detected Anomaly",
+    marker="x",
+    s=70
+)
+
+plt.title("CPU Usage vs Memory Usage")
+plt.xlabel("CPU Usage (%)")
+plt.ylabel("Memory Usage (%)")
+plt.legend()
+plt.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+---
+most_anomalous_final = results.sort_values(
+    "final_anomaly_score"
+).head(10)
+
+display(
+    most_anomalous_final[
+        [
+            "timestamp",
+            "cpu_usage",
+            "memory_usage",
+            "disk_usage",
+            "network_usage",
+            "active_processes",
+            "final_anomaly_score",
+            "anomaly",
+            "final_prediction"
+        ]
+    ]
+)
+---
+import joblib
+
+joblib.dump(final_model, "server_anomaly_model.pkl")
+joblib.dump(scaler, "server_scaler.pkl")
+---
+import joblib
+
+joblib.dump(final_model, "server_anomaly_model.pkl")
